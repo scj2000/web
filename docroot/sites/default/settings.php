@@ -629,6 +629,11 @@ $conf['404_fast_html'] = '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML+RDFa 1.0//EN"
  */
 # $conf['allow_css_double_underscores'] = TRUE;
 
+// Cloudflare
+if (isset($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+  $_SERVER['REMOTE_ADDR'] = $_SERVER['HTTP_CF_CONNECTING_IP'];
+}
+
 // Check if the file exists prior to including it.
 if (file_exists(dirname(__FILE__) . '/env.php')) {
   include dirname(__FILE__) . '/env.php';
