@@ -1,0 +1,6 @@
+# Ignore configuration files that may contain sensitive information.
+docroot/sites/*/env*.php
+
+# Ignore paths that contain user-generated content.
+docroot/sites/*/files
+docroot/sites/*/private

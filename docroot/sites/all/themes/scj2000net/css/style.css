@@ -1,0 +1,19 @@
+/**
+ * Place your custom styles here.
+ */
+
+a,
+a:hover,
+a:focus,
+a:active,
+a:visited {
+  color: #b90303;
+}
+
+h2, .h2 {
+  font-size: 24px;
+}
+
+.field-name-taxonomy-vocabulary-1 {
+  float: right;
+}
