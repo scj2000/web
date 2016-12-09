@@ -17,3 +17,8 @@ h2, .h2 {
 .field-name-taxonomy-vocabulary-1 {
   float: right;
 }
+
+#forum td,
+#forum th {
+  padding: 5px 10px;
+}
