@@ -1,0 +1,174 @@
+<?php
+
+/**
+ * @file
+ * Purge clears url's from CloudFlare cache by issuing HTTP POST requests.
+ */
+
+/**
+ * Implements hook_menu().
+ *
+ * Set up admin settings callbacks, etc.
+ */
+function cfpurge_menu() {
+  $items = array();
+  $items['admin/config/development/performance/cfpurge'] = array(
+    'title' => 'CloudFlare Purge settings',
+    'description' => 'Configure CloudFlare cache purges.',
+    'page callback' => 'drupal_get_form',
+    'type' => MENU_LOCAL_TASK,
+    'page arguments' => array('cfpurge_admin_settings_form'),
+    'access arguments' => array('administer site configuration'),
+  );
+  return $items;
+}
+
+/**
+ * Menu callback for cfpurge admin settings.
+ */
+function cfpurge_admin_settings_form() {
+  $form = array();
+  $form['cfpurge_api_url'] = array(
+    '#type' => 'textfield',
+    '#title' => t('CloudFlare API URL'),
+    '#default_value' => variable_get('cfpurge_api_url', 'https://api.cloudflare.com/client/v4/'),
+    '#description' => t("Enter the URL for CloudFlare's API. See the <a href='!url'>CloudFlare API documentation</a> for the latest information.", array('!url' => 'https://api.cloudflare.com/#endpoints')),
+    '#required' => 1,
+  );
+  $form['cfpurge_api_key'] = array(
+    '#type' => 'textfield',
+    '#title' => t('CloudFlare API Key'),
+    '#default_value' => variable_get('cfpurge_api_key', ''),
+    '#description' => t("Enter your key for CloudFlare's API service. You'll find this under Account"),
+    '#required' => 1,
+  );
+  $form['cfpurge_email'] = array(
+    '#type' => 'textfield',
+    '#title' => t('CloudFlare Email'),
+    '#default_value' => variable_get('cfpurge_email', ''),
+    '#description' => t('Enter the email address you use for CloudFlare.'),
+    '#required' => 1,
+  );
+  $form['cfpurge_zone'] = array(
+    '#type' => 'textfield',
+    '#title' => t('CloudFlare Zone'),
+    '#default_value' => variable_get('cfpurge_zone', ''),
+    '#description' => t('Enter the Cloudflare zone assigned to this website, normally the domain.'),
+    '#required' => 1,
+  );
+  $form['cfpurge_url_prefix'] = array(
+    '#type' => 'textfield',
+    '#title' => t('URL Prefix'),
+    '#default_value' => variable_get('cfpurge_url_prefix', url('', array('absolute' => TRUE))),
+    '#description' => t('This converts the relative paths to absolute URLs using this prefix.'),
+    '#required' => 1,
+  );
+
+  $form['#submit'][] = 'cfpurge_admin_settings_create_purge_url';
+
+  return system_settings_form($form);
+}
+
+/**
+ * Validate the Purge settings.
+ */
+function cfpurge_admin_settings_form_validate($form, &$form_state) {
+  // Check if API URL is valid.
+  if (!valid_url($form_state['values']['cfpurge_api_url'], TRUE)) {
+    form_set_error('cfpurge_api_url', t('This is not a valid URL: !url.', array('!url' => $form_state['values']['cfpurge_api_url'])));
+  }
+
+  // Check if path prefix is a valid URL.
+  if (!valid_url($form_state['values']['cfpurge_url_prefix'], TRUE)) {
+    form_set_error('cfpurge_api_url', t('This is not a valid URL: !url.', array('!url' => $form_state['values']['cfpurge_api_url'])));
+  }
+
+  // Check if the zone exists
+  if (!$form_state['temporary']['cfpurge_purge_url'] = cfpurge_get_zone_id($form_state['values'])) {
+    form_set_error('cfpurge_zone', t('Your zone \'!zone\' is either invalid, or \'!api_url\' is incorrect. Please be sure to use https://api.cloudflare.com/client/v4/ (including the trailing slash). Be sure to confirm you are using the correct email address and API key as well.', array('!zone' => $form_state['values']['cfpurge_zone'], '!api_url' => $form_state['values']['cfpurge_api_url'])));
+  }
+}
+
+function cfpurge_get_zone_id($values) {
+  $curl_cfpurge = curl_init();
+  $api_url = $values['cfpurge_api_url'] . 'zones';
+  curl_setopt($curl_cfpurge, CURLOPT_URL, $api_url . '?name=' . $values['cfpurge_zone']);
+  curl_setopt($curl_cfpurge, CURLOPT_RETURNTRANSFER, 1);
+  curl_setopt($curl_cfpurge, CURLOPT_TIMEOUT, 5);
+  curl_setopt($curl_cfpurge, CURLOPT_FOLLOWLOCATION, TRUE);
+  curl_setopt($curl_cfpurge, CURLOPT_AUTOREFERER, TRUE);
+  curl_setopt($curl_cfpurge, CURLOPT_SSL_VERIFYPEER, FALSE);
+  curl_setopt($curl_cfpurge, CURLOPT_HTTPHEADER, array(
+    'User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0) Gecko/20100101 Firefox/10.0',
+    'X-Auth-Email: ' . $values['cfpurge_email'],
+    'X-Auth-Key: ' . $values['cfpurge_api_key'],
+    'Content-Type: application/json',
+  ));
+
+  $response = curl_exec($curl_cfpurge);
+  $info = curl_getinfo($curl_cfpurge);
+  curl_close($curl_cfpurge);
+  $body_array = explode("\r\n\r\n", $response);
+  $body = drupal_json_decode(array_pop($body_array));
+  if ($info['http_code'] != '200' || $body['success'] !== TRUE || empty($body['result'])) {
+    return FALSE;
+  }
+  else {
+    return $api_url . '/' . $body['result'][0]['id'] . '/purge_cache';
+  }
+}
+
+function cfpurge_admin_settings_create_purge_url($form, &$form_state) {
+  $name = 'cfpurge_purge_url';
+  variable_set($name, $form_state['temporary'][$name]);
+}
+
+/**
+ * Implements hook_exit().
+ *
+ * Add Cache-Control and Expires header,
+ * to ensure external caching through CloudFlare.
+ */
+function cfpurge_exit() {
+  $status = drupal_get_http_header("status");
+  $is_error = preg_match('/^(4|5)/', $status);
+
+  if (drupal_page_is_cacheable() &&
+      !$is_error &&
+      !variable_get('maintenance_mode', 0) &&
+      !variable_get('cache', 0)) {
+
+    $cache_lifetime = variable_get('cache_lifetime', 0);
+    $maximum_age = variable_get('page_cache_maximum_age', 0);
+
+    // Override core's expiration header.
+    drupal_add_http_header('Cache-Control', 'public, max-age=' . $cache_lifetime);
+    drupal_add_http_header('Expires', gmdate('D, d M Y H:i:s', time() + $maximum_age) . ' GMT');
+  }
+}
+
+/**
+ * Implements hook_module_implements_alter().
+ *
+ * Alter the order of modules set off by the expire_cache hook. Moves this
+ * module to the last place.
+ */
+function cfpurge_module_implements_alter(&$implementations, $hook) {
+  if ($hook == 'expire_cache') {
+    // Move my_module_rdf_mapping() to the end of the list.
+    $group = $implementations['cfpurge'];
+    unset($implementations['cfpurge']);
+    $implementations['cfpurge'] = $group;
+  }
+}
+
+/**
+ * Implements hook_expire_cache().
+ *
+ * Takes an array from expire.module and issues purge.
+ */
+function cfpurge_expire_cache($expire_urls) {
+  module_load_include('inc', 'cfpurge');
+  $results = cfpurge_urls($expire_urls);
+  cfpurge_logging($results);
+}
