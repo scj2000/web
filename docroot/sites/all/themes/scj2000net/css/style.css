@@ -42,3 +42,11 @@ h2, .h2 {
 #forum th {
   padding: 5px 10px;
 }
+
+.glyphicon {
+  margin-right: 3px;
+}
+
+.captcha {
+  margin: 5px 0;
+}
